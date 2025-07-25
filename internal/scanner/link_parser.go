@@ -43,7 +43,7 @@ func NewLinkParser() *LinkParser {
 		htmlSrcPattern:       regexp.MustCompile(`src=["']([^"']+)["']`),
 		yamlImagePattern:     regexp.MustCompile(`(?i)^\s*(?:image|featured_image|hero_image|banner_image|cover_image|thumbnail|avatar):\s*["']?([^"'\s]+)["']?\s*$`),
 		hugoShortcodePattern: regexp.MustCompile(`\{\{<\s*(?:gallery-image|figure|img|image)\s+[^>]*(?:src|image)=["']([^"']+)["'][^>]*>\}\}`),
-		cssBackgroundPattern: regexp.MustCompile(`background-image:\s*url\(["']?([^"')]+)["']?\)`),
+		cssBackgroundPattern: regexp.MustCompile(`(?:background-image|background):\s*[^;]*url\(["']?([^"')]+)["']?\)`),
 
 		// Document patterns
 		markdownLinkPattern:     regexp.MustCompile(`\[([^\]]*)\]\(([^)]+)\)`), // [text](link)
