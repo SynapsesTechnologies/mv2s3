@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/SynapsesTechnologies/mv2s3/pkg/types"
@@ -46,6 +47,14 @@ func LoadConfig(cfgFile string) (*types.MigrationConfig, string, error) {
 		return nil, "", err
 	}
 
+	// Parse string-based media types to enum types
+	if err := config.ParseEnabledMediaTypes(); err != nil {
+		return nil, "", fmt.Errorf("failed to parse enabled media types: %w", err)
+	}
+
+	// Initialize media types with defaults and backward compatibility
+	config.InitializeMediaTypes()
+
 	// Get the actual config file that was used
 	configFileUsed := v.ConfigFileUsed()
 
@@ -58,7 +67,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("file_extensions", []string{"html", "css", "js", "md", "jsx", "tsx"})
 	v.SetDefault("exclude_patterns", []string{"node_modules/**", ".git/**", "dist/**", "build/**"})
 
-	// S3 defaults
+	// Media type defaults (v0.2.0+)
+	v.SetDefault("enabled_media_types", []string{"images"}) // Default to images only for backward compatibility
+
+	// S3 defaults (legacy, maintained for backward compatibility)
 	v.SetDefault("s3_region", "us-east-1")
 	v.SetDefault("s3_prefix", "")
 
