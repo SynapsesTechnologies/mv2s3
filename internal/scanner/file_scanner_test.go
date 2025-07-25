@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"testing"
+
 	"github.com/SynapsesTechnologies/mv2s3/pkg/types"
 )
 
@@ -13,7 +14,8 @@ func TestNewFileScanner(t *testing.T) {
 
 	scanner := NewFileScanner(config)
 	if scanner == nil {
-		t.Error("Expected NewFileScanner to return a non-nil scanner")
+		t.Fatal("Expected NewFileScanner to return a non-nil scanner")
+		return
 	}
 
 	if scanner.config != config {

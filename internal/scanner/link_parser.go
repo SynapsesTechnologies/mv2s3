@@ -161,7 +161,7 @@ func (lp *LinkParser) IsLocalURL(url string) bool {
 		return false
 	}
 	// Skip mailto and other protocols
-	if strings.Contains(url, "://") {
+	if strings.Contains(url, "://") || strings.HasPrefix(url, "mailto:") {
 		return false
 	}
 	// Skip S3 URLs that might not have protocol prefix
@@ -172,74 +172,7 @@ func (lp *LinkParser) IsLocalURL(url string) bool {
 	return true
 }
 
-// parseMarkdownLine extracts image references from a single line of Markdown
-func (lp *LinkParser) parseMarkdownLine(filePath, line string, lineNumber int) []types.ImageReference {
-	var references []types.ImageReference
-
-	// Check for YAML frontmatter images if we're in the frontmatter section
-	if lp.inFrontmatter {
-		yamlRefs := lp.parseYAMLLine(filePath, line, lineNumber)
-		references = append(references, yamlRefs...)
-	}
-
-	// Find Markdown image syntax: ![alt](path)
-	matches := lp.markdownImagePattern.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) >= 3 {
-			altText := match[1]
-			imagePath := match[2]
-
-			// Handle titles in image syntax: ![alt](path "title")
-			if spaceIndex := strings.Index(imagePath, " "); spaceIndex != -1 {
-				imagePath = imagePath[:spaceIndex]
-			}
-
-			ref := types.ImageReference{
-				SourceFile:  filePath,
-				LocalPath:   imagePath, // Will be resolved later
-				LineNumber:  lineNumber,
-				OriginalURL: imagePath,
-			}
-			references = append(references, ref)
-
-			// Log for debugging (can be removed later)
-			_ = altText // Suppress unused variable warning
-		}
-	}
-
-	// Check for Hugo shortcodes
-	hugoRefs := lp.parseHugoShortcodes(filePath, line, lineNumber)
-	references = append(references, hugoRefs...)
-
-	// Also check for HTML img tags within Markdown
-	htmlRefs := lp.parseHTMLLine(filePath, line, lineNumber)
-	references = append(references, htmlRefs...)
-
-	return references
-}
-
-// parseHTMLLine extracts image references from a single line of HTML
-func (lp *LinkParser) parseHTMLLine(filePath, line string, lineNumber int) []types.ImageReference {
-	var references []types.ImageReference
-
-	// Find HTML img tags
-	matches := lp.htmlImagePattern.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) >= 2 {
-			imagePath := match[1]
-
-			ref := types.ImageReference{
-				SourceFile:  filePath,
-				LocalPath:   imagePath, // Will be resolved later
-				LineNumber:  lineNumber,
-				OriginalURL: imagePath,
-			}
-			references = append(references, ref)
-		}
-	}
-
-	return references
-}
+// Media-aware parsing methods (v0.2.0+)
 
 // updateFrontmatterState tracks whether we're currently in YAML frontmatter
 func (lp *LinkParser) updateFrontmatterState(line string) {
@@ -250,74 +183,6 @@ func (lp *LinkParser) updateFrontmatterState(line string) {
 		lp.inFrontmatter = !lp.inFrontmatter
 	}
 }
-
-// parseYAMLLine extracts image references from YAML frontmatter
-func (lp *LinkParser) parseYAMLLine(filePath, line string, lineNumber int) []types.ImageReference {
-	var references []types.ImageReference
-
-	matches := lp.yamlImagePattern.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) >= 2 {
-			imagePath := match[1]
-
-			ref := types.ImageReference{
-				SourceFile:  filePath,
-				LocalPath:   imagePath, // Will be resolved later
-				LineNumber:  lineNumber,
-				OriginalURL: imagePath,
-			}
-			references = append(references, ref)
-		}
-	}
-
-	return references
-}
-
-// parseHugoShortcodes extracts image references from Hugo shortcodes
-func (lp *LinkParser) parseHugoShortcodes(filePath, line string, lineNumber int) []types.ImageReference {
-	var references []types.ImageReference
-
-	matches := lp.hugoShortcodePattern.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) >= 2 {
-			imagePath := match[1]
-
-			ref := types.ImageReference{
-				SourceFile:  filePath,
-				LocalPath:   imagePath, // Will be resolved later
-				LineNumber:  lineNumber,
-				OriginalURL: imagePath,
-			}
-			references = append(references, ref)
-		}
-	}
-
-	return references
-}
-
-// parseCSSLine extracts image references from CSS background-image properties
-func (lp *LinkParser) parseCSSLine(filePath, line string, lineNumber int) []types.ImageReference {
-	var references []types.ImageReference
-
-	matches := lp.cssBackgroundPattern.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) >= 2 {
-			imagePath := match[1]
-
-			ref := types.ImageReference{
-				SourceFile:  filePath,
-				LocalPath:   imagePath, // Will be resolved later
-				LineNumber:  lineNumber,
-				OriginalURL: imagePath,
-			}
-			references = append(references, ref)
-		}
-	}
-
-	return references
-}
-
-// Media-aware parsing methods (v0.2.0+)
 
 // parseMarkdownLineMedia extracts media references from a single line of Markdown
 func (lp *LinkParser) parseMarkdownLineMedia(filePath, line string, lineNumber int, config *types.MigrationConfig) []types.MediaReference {

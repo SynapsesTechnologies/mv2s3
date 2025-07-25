@@ -10,11 +10,13 @@ func TestNewMediaTypeDetector(t *testing.T) {
 	detector := NewMediaTypeDetector()
 
 	if detector == nil {
-		t.Error("NewMediaTypeDetector should not return nil")
+		t.Fatal("NewMediaTypeDetector should not return nil")
+		return
 	}
 
 	if detector.extensionCache == nil {
-		t.Error("Extension cache should be initialized")
+		t.Fatal("Extension cache should be initialized")
+		return
 	}
 
 	// Check that some known extensions are cached

@@ -127,9 +127,7 @@ func (mtd *MediaTypeDetector) FilterFilesByMediaType(filePaths []string, mediaTy
 func (mtd *MediaTypeDetector) UpdateExtensionCache(extensions map[string]types.MediaType) {
 	for ext, mediaType := range extensions {
 		ext = strings.ToLower(ext)
-		if strings.HasPrefix(ext, ".") {
-			ext = ext[1:] // Remove dot prefix if present
-		}
+		ext = strings.TrimPrefix(ext, ".") // Remove dot prefix if present
 		mtd.extensionCache[ext] = mediaType
 	}
 }

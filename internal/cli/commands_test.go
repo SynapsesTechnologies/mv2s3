@@ -53,34 +53,8 @@ func TestMigrateCommandFlags(t *testing.T) {
 		}
 	}
 
-	// Test required flags
-	requiredFlags := []string{"bucket"}
-	for _, flagName := range requiredFlags {
-		flag := cmd.Flags().Lookup(flagName)
-		if flag == nil {
-			t.Errorf("Flag --%s not found", flagName)
-			continue
-		}
-
-		annotations := flag.Annotations
-		if annotations == nil {
-			t.Errorf("Expected flag --%s to be required", flagName)
-			continue
-		}
-
-		found := false
-		requiredAnnotation := annotations["cobra_annotation_bash_completion_one_required_flag"]
-		for _, value := range requiredAnnotation {
-			if value == "true" {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			t.Errorf("Expected flag --%s to be marked as required", flagName)
-		}
-	}
+	// Note: bucket flag is not marked as required at Cobra level
+	// since it can be provided via configuration file
 }
 
 func TestScanCommandFlags(t *testing.T) {
@@ -114,34 +88,8 @@ func TestVerifyCommandFlags(t *testing.T) {
 		}
 	}
 
-	// Test required flags
-	requiredFlags := []string{"bucket"}
-	for _, flagName := range requiredFlags {
-		flag := cmd.Flags().Lookup(flagName)
-		if flag == nil {
-			t.Errorf("Flag --%s not found", flagName)
-			continue
-		}
-
-		annotations := flag.Annotations
-		if annotations == nil {
-			t.Errorf("Expected flag --%s to be required", flagName)
-			continue
-		}
-
-		found := false
-		requiredAnnotation := annotations["cobra_annotation_bash_completion_one_required_flag"]
-		for _, value := range requiredAnnotation {
-			if value == "true" {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			t.Errorf("Expected flag --%s to be marked as required", flagName)
-		}
-	}
+	// Note: bucket flag is not marked as required at Cobra level
+	// since it can be provided via configuration file
 }
 
 func TestCleanupCommandFlags(t *testing.T) {
@@ -150,7 +98,7 @@ func TestCleanupCommandFlags(t *testing.T) {
 		t.Fatalf("Failed to find cleanup command: %v", err)
 	}
 
-	expectedFlags := []string{"source", "backup-dir"}
+	expectedFlags := []string{"scan-file", "backup-dir"}
 
 	for _, flagName := range expectedFlags {
 		flag := cmd.Flags().Lookup(flagName)

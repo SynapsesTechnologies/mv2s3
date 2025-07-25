@@ -25,7 +25,7 @@ func NewURLReplacer(verbose, dryRun, createBackups bool) *URLReplacer {
 	}
 }
 
-// ReplaceURLsInFile replaces URLs in a source file
+// ReplaceURLsInFile replaces URLs in a source file with support for all media types
 func (ur *URLReplacer) ReplaceURLsInFile(filePath string, replacements map[string]string) error {
 	if len(replacements) == 0 {
 		return nil
@@ -45,28 +45,73 @@ func (ur *URLReplacer) ReplaceURLsInFile(filePath string, replacements map[strin
 		// Escape special regex characters in the old URL
 		escapedOldURL := regexp.QuoteMeta(oldURL)
 
-		// Replace in Markdown format: ![...](oldURL)
-		markdownPattern := fmt.Sprintf(`(!\[[^\]]*\]\()%s(\))`, escapedOldURL)
-		markdownRegex := regexp.MustCompile(markdownPattern)
-		updatedContent = markdownRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+		// Replace in Markdown image format: ![...](oldURL)
+		markdownImagePattern := fmt.Sprintf(`(!\[[^\]]*\]\()%s(\))`, escapedOldURL)
+		markdownImageRegex := regexp.MustCompile(markdownImagePattern)
+		updatedContent = markdownImageRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
 
-		// Replace in HTML format: <img src="oldURL"
-		htmlPattern := fmt.Sprintf(`(<img[^>]+src=["'])%s(["'][^>]*>)`, escapedOldURL)
-		htmlRegex := regexp.MustCompile(htmlPattern)
-		updatedContent = htmlRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+		// Replace in Markdown link format: [...](oldURL) - for documents and other media
+		markdownLinkPattern := fmt.Sprintf(`(\[[^\]]*\]\()%s(\))`, escapedOldURL)
+		markdownLinkRegex := regexp.MustCompile(markdownLinkPattern)
+		updatedContent = markdownLinkRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
 
-		// Replace in YAML frontmatter format: featured_image: "oldURL"
-		yamlPattern := fmt.Sprintf(`(?m)(^\s*(?:image|featured_image|hero_image|banner_image|cover_image|thumbnail|avatar):\s*["']?)%s(["']?\s*$)`, escapedOldURL)
-		yamlRegex := regexp.MustCompile(yamlPattern)
-		updatedContent = yamlRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+		// Replace in HTML img format: <img src="oldURL"
+		htmlImgPattern := fmt.Sprintf(`(<img[^>]+src=["'])%s(["'][^>]*>)`, escapedOldURL)
+		htmlImgRegex := regexp.MustCompile(htmlImgPattern)
+		updatedContent = htmlImgRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
 
-		// Replace in Hugo shortcode format: {{< gallery-image src="oldURL" >}}
-		hugoPattern := fmt.Sprintf(`(\{\{<\s*(?:gallery-image|figure|img|image)\s+[^>]*(?:src|image)=["'])%s(["'][^>]*>\}\})`, escapedOldURL)
-		hugoRegex := regexp.MustCompile(hugoPattern)
-		updatedContent = hugoRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+		// Replace in HTML anchor format: <a href="oldURL"
+		htmlAnchorPattern := fmt.Sprintf(`(<a[^>]+href=["'])%s(["'][^>]*>)`, escapedOldURL)
+		htmlAnchorRegex := regexp.MustCompile(htmlAnchorPattern)
+		updatedContent = htmlAnchorRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
 
-		// Replace in CSS background-image format: background-image: url("oldURL")
-		cssPattern := fmt.Sprintf(`(background-image:\s*url\(["']?)%s(["']?\))`, escapedOldURL)
+		// Replace in HTML embed format: <embed src="oldURL"
+		htmlEmbedPattern := fmt.Sprintf(`(<embed[^>]+src=["'])%s(["'][^>]*>)`, escapedOldURL)
+		htmlEmbedRegex := regexp.MustCompile(htmlEmbedPattern)
+		updatedContent = htmlEmbedRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in HTML object format: <object data="oldURL"
+		htmlObjectPattern := fmt.Sprintf(`(<object[^>]+data=["'])%s(["'][^>]*>)`, escapedOldURL)
+		htmlObjectRegex := regexp.MustCompile(htmlObjectPattern)
+		updatedContent = htmlObjectRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in HTML iframe format: <iframe src="oldURL"
+		htmlIframePattern := fmt.Sprintf(`(<iframe[^>]+src=["'])%s(["'][^>]*>)`, escapedOldURL)
+		htmlIframeRegex := regexp.MustCompile(htmlIframePattern)
+		updatedContent = htmlIframeRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in HTML video format: <video src="oldURL"
+		htmlVideoPattern := fmt.Sprintf(`(<video[^>]+src=["'])%s(["'][^>]*>)`, escapedOldURL)
+		htmlVideoRegex := regexp.MustCompile(htmlVideoPattern)
+		updatedContent = htmlVideoRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in HTML audio format: <audio src="oldURL"
+		htmlAudioPattern := fmt.Sprintf(`(<audio[^>]+src=["'])%s(["'][^>]*>)`, escapedOldURL)
+		htmlAudioRegex := regexp.MustCompile(htmlAudioPattern)
+		updatedContent = htmlAudioRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in YAML frontmatter format for images: image: "oldURL"
+		yamlImagePattern := fmt.Sprintf(`(?m)(^\s*(?:image|featured_image|hero_image|banner_image|cover_image|thumbnail|avatar):\s*["']?)%s(["']?\s*$)`, escapedOldURL)
+		yamlImageRegex := regexp.MustCompile(yamlImagePattern)
+		updatedContent = yamlImageRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in YAML frontmatter format for documents: document: "oldURL"
+		yamlDocPattern := fmt.Sprintf(`(?m)(^\s*(?:document|download|download_link|file|attachment|pdf_link|doc_link):\s*["']?)%s(["']?\s*$)`, escapedOldURL)
+		yamlDocRegex := regexp.MustCompile(yamlDocPattern)
+		updatedContent = yamlDocRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in Hugo shortcode format for images: {{< gallery-image src="oldURL" >}}
+		hugoImagePattern := fmt.Sprintf(`(\{\{<\s*(?:gallery-image|figure|img|image)\s+[^>]*(?:src|image)=["'])%s(["'][^>]*>\}\})`, escapedOldURL)
+		hugoImageRegex := regexp.MustCompile(hugoImagePattern)
+		updatedContent = hugoImageRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in Hugo shortcode format for documents: {{< download src="oldURL" >}}
+		hugoDocPattern := fmt.Sprintf(`(\{\{<\s*(?:download|document|file|attachment)\s+[^>]*(?:src|href|file|url)=["'])%s(["'][^>]*>\}\})`, escapedOldURL)
+		hugoDocRegex := regexp.MustCompile(hugoDocPattern)
+		updatedContent = hugoDocRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
+
+		// Replace in CSS background format: background-image: url("oldURL") or background: url("oldURL")
+		cssPattern := fmt.Sprintf(`((?:background-image|background):\s*[^;]*url\(["']?)%s(["']?\))`, escapedOldURL)
 		cssRegex := regexp.MustCompile(cssPattern)
 		updatedContent = cssRegex.ReplaceAllString(updatedContent, "${1}"+newURL+"${2}")
 
@@ -124,7 +169,41 @@ func (ur *URLReplacer) createBackup(filePath string) error {
 	return nil
 }
 
-// UpdateImageReferences updates multiple image references
+// UpdateMediaReferences updates multiple media references (v0.2.0+)
+func (ur *URLReplacer) UpdateMediaReferences(refs []types.MediaReference, urlMapping map[string]string) error {
+	// Group references by source file
+	fileReplacements := make(map[string]map[string]string)
+
+	for _, ref := range refs {
+		newURL, exists := urlMapping[ref.OriginalURL]
+		if !exists {
+			if ur.verbose {
+				fmt.Printf("  Warning: No S3 URL mapping found for %s\n", ref.OriginalURL)
+			}
+			continue
+		}
+
+		if fileReplacements[ref.SourceFile] == nil {
+			fileReplacements[ref.SourceFile] = make(map[string]string)
+		}
+		fileReplacements[ref.SourceFile][ref.OriginalURL] = newURL
+	}
+
+	// Update each file
+	for filePath, replacements := range fileReplacements {
+		if ur.verbose {
+			fmt.Printf("Updating file: %s\n", filePath)
+		}
+
+		if err := ur.ReplaceURLsInFile(filePath, replacements); err != nil {
+			return fmt.Errorf("error updating %s: %w", filePath, err)
+		}
+	}
+
+	return nil
+}
+
+// UpdateImageReferences updates multiple image references (legacy method for backward compatibility)
 func (ur *URLReplacer) UpdateImageReferences(refs []types.ImageReference, urlMapping map[string]string) error {
 	// Group references by source file
 	fileReplacements := make(map[string]map[string]string)
@@ -158,7 +237,36 @@ func (ur *URLReplacer) UpdateImageReferences(refs []types.ImageReference, urlMap
 	return nil
 }
 
-// ValidateFileAccess checks if files can be read and written
+// ValidateMediaFileAccess checks if media files can be read and written (v0.2.0+)
+func (ur *URLReplacer) ValidateMediaFileAccess(refs []types.MediaReference) error {
+	checkedFiles := make(map[string]bool)
+
+	for _, ref := range refs {
+		if checkedFiles[ref.SourceFile] {
+			continue
+		}
+
+		// Check if file exists and is readable
+		if _, err := os.Stat(ref.SourceFile); err != nil {
+			return fmt.Errorf("cannot access file %s: %w", ref.SourceFile, err)
+		}
+
+		// Check if file is writable
+		if !ur.dryRun {
+			file, err := os.OpenFile(ref.SourceFile, os.O_WRONLY, 0)
+			if err != nil {
+				return fmt.Errorf("cannot write to file %s: %w", ref.SourceFile, err)
+			}
+			file.Close()
+		}
+
+		checkedFiles[ref.SourceFile] = true
+	}
+
+	return nil
+}
+
+// ValidateFileAccess checks if files can be read and written (legacy method for backward compatibility)
 func (ur *URLReplacer) ValidateFileAccess(refs []types.ImageReference) error {
 	checkedFiles := make(map[string]bool)
 
