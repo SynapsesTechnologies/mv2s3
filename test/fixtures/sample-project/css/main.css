@@ -1,0 +1,26 @@
+/* Sample CSS with image references */
+.hero {
+    background-image: url('../images/hero-background.jpg');
+    background-size: cover;
+}
+
+.logo {
+    background: url("../images/logo-small.png") no-repeat;
+    width: 100px;
+    height: 50px;
+}
+
+@font-face {
+    font-family: 'CustomFont';
+    src: url('../fonts/custom.woff2') format('woff2'),
+         url('../fonts/custom.woff') format('woff');
+}
+
+.icon-home::before {
+    content: url("../images/icons/home.svg");
+}
+
+/* External URL - should not be processed */
+.external-bg {
+    background-image: url('https://cdn.example.com/bg.jpg');
+}

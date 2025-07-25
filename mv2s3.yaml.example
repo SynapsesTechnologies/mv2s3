@@ -1,0 +1,30 @@
+# mv2s3 Configuration File Example
+
+# Source scanning configuration
+source_dir: "./website"
+file_extensions: ["html", "css", "js", "md", "jsx", "tsx"]
+exclude_patterns: 
+  - "node_modules/**"
+  - ".git/**"
+  - "dist/**"
+  - "build/**"
+include_patterns: []
+
+# AWS S3 configuration
+s3_bucket: "my-website-images"
+s3_region: "us-east-1"
+s3_prefix: "images/"
+s3_endpoint: ""  # For S3-compatible services like MinIO
+s3_profile: "default"
+
+# Processing options
+dry_run: false
+cleanup_local: false
+backup_originals: true
+backup_dir: "./backups"
+concurrency: 5
+
+# Logging configuration
+log_level: "info"
+log_format: "text"  # or "json"
+verbose: false

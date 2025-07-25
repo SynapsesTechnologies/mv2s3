@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sample Project</title>
+    <link rel="icon" href="images/favicon.ico">
+    <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+    <header>
+        <img src="images/logo.png" alt="Logo" class="logo">
+        <img src="./images/header-bg.jpg" alt="Header Background">
+    </header>
+    <main>
+        <section style="background-image: url('images/hero-bg.png')">
+            <h1>Welcome</h1>
+            <p>This is a test page with various image references.</p>
+            <img src="/images/content-image.jpg" alt="Content">
+            <!-- This should not be processed: <img src="https://external.com/image.jpg"> -->
+        </section>
+    </main>
+    <footer>
+        <img src="../images/footer-logo.svg" alt="Footer Logo">
+    </footer>
+</body>
+</html>
