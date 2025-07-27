@@ -1,4 +1,4 @@
-# mv2s3 Configuration File Example
+# mv2s3 Configuration File Example (v0.2.0)
 
 # Source scanning configuration
 source_dir: "./website"
@@ -10,10 +10,25 @@ exclude_patterns:
   - "build/**"
 include_patterns: []
 
+# Media type configuration (v0.2.0+)
+media:
+  images:
+    enabled: true
+    extensions: ["jpg", "jpeg", "png", "gif", "svg", "webp", "ico", "bmp", "tiff", "tif"]
+  documents:
+    enabled: false
+    extensions: ["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "rtf", "odt", "ods", "odp"]
+  videos:
+    enabled: false
+    extensions: ["mp4", "avi", "mov", "wmv", "flv", "webm", "mkv", "m4v", "3gp", "ogv"]
+  audio:
+    enabled: false
+    extensions: ["mp3", "wav", "ogg", "flac", "aac", "m4a", "wma", "opus"]
+
 # AWS S3 configuration
-s3_bucket: "my-website-images"
+s3_bucket: "my-website-assets"  # Updated name to reflect multi-media support
 s3_region: "us-east-1"
-s3_prefix: "images/"
+s3_prefix: "assets/"            # Updated to be more generic
 s3_endpoint: ""  # For S3-compatible services like MinIO
 s3_profile: "default"
 
@@ -28,3 +43,6 @@ concurrency: 5
 log_level: "info"
 log_format: "text"  # or "json"
 verbose: false
+
+# Backward compatibility (v0.1.x configs will still work)
+# If no media configuration is provided, defaults to images-only mode

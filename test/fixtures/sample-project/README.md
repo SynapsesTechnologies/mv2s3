@@ -15,5 +15,13 @@ Here are some images in markdown:
 - ![Image 1](images/gallery/img1.jpg)
 - ![Image 2](images/gallery/img2.jpg)
 
+## Documentation
+
+You can find more information in these documents:
+
+- [Installation Guide](docs/installation.pdf)
+- [API Documentation](./docs/api-reference.docx)
+- [User Guide](documents/user-guide.txt)
+
 External image (should not be processed):
 ![External](https://example.com/external.jpg)

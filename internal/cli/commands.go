@@ -26,21 +26,31 @@ var (
 
 // ScanResults represents the output of a scan operation
 type ScanResults struct {
-	Timestamp   time.Time              `json:"timestamp"`
-	SourceDir   string                 `json:"source_dir"`
-	Extensions  []string               `json:"extensions"`
-	TotalFiles  int                    `json:"total_files"`
-	TotalImages int                    `json:"total_images"`
-	References  []types.ImageReference `json:"references"`
+	Timestamp       time.Time              `json:"timestamp"`
+	SourceDir       string                 `json:"source_dir"`
+	Extensions      []string               `json:"extensions"`
+	TotalFiles      int                    `json:"total_files"`
+	TotalMedia      int                    `json:"total_media"`
+	TotalImages     int                    `json:"total_images"` // Backward compatibility
+	MediaReferences []types.MediaReference `json:"media_references"`
+	References      []types.ImageReference `json:"references"`  // Backward compatibility
+	MediaStats      map[string]int         `json:"media_stats"` // Stats by media type
 }
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "mv2s3",
-	Short: "Move local images to S3 and update references",
-	Long: `mv2s3 is a command-line tool that scans web source code files for local image references,
-uploads those images to AWS S3 (or compatible storage), and updates the source code with new URLs.`,
-	Version: "0.1.0",
+	Short: "Move local media files to S3 and update references",
+	Long: `mv2s3 is a command-line tool that scans web source code files for local media references,
+uploads those media files (images, documents, videos, audio) to AWS S3 (or compatible storage), 
+and updates the source code with new URLs.
+
+Supports multiple media types:
+- Images: jpg, png, gif, svg, webp, ico, bmp, tiff
+- Documents: pdf, doc, docx, ppt, pptx, xls, xlsx, txt, rtf, odt, ods, odp
+- Videos: mp4, avi, mov, wmv, flv, webm, mkv, m4v, 3gp, ogv
+- Audio: mp3, wav, ogg, flac, aac, m4a, wma, opus`,
+	Version: "0.2.0",
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -170,14 +180,127 @@ func mergeConfigWithFlags(cmd *cobra.Command) (*types.MigrationConfig, error) {
 		cfg.Verbose = true
 	}
 
+	// Handle media type flags (v0.2.0+)
+	if err := handleMediaTypeFlags(cmd, cfg); err != nil {
+		return nil, fmt.Errorf("failed to process media type flags: %w", err)
+	}
+
 	return cfg, nil
+}
+
+// handleMediaTypeFlags processes media type-related command flags and updates the configuration
+func handleMediaTypeFlags(cmd *cobra.Command, cfg *types.MigrationConfig) error {
+	// Initialize MediaTypes map if not already initialized
+	if cfg.MediaTypes == nil {
+		cfg.MediaTypes = make(map[types.MediaType]*types.MediaConfig)
+	}
+
+	// Check if --media-types flag was used
+	if cmd.Flags().Changed("media-types") {
+		mediaTypesStr, _ := cmd.Flags().GetStringSlice("media-types")
+		cfg.EnabledMediaTypesStr = mediaTypesStr
+
+		// Parse to MediaType enums
+		cfg.EnabledMediaTypes = make([]types.MediaType, 0, len(mediaTypesStr))
+		for _, typeStr := range mediaTypesStr {
+			mediaType, err := types.ParseMediaType(typeStr)
+			if err != nil {
+				return fmt.Errorf("invalid media type '%s': %w", typeStr, err)
+			}
+			cfg.EnabledMediaTypes = append(cfg.EnabledMediaTypes, mediaType)
+		}
+	}
+
+	// Handle individual media type flags (these override --media-types)
+	enabledTypes := make([]types.MediaType, 0, 4)
+
+	if cmd.Flags().Changed("images") {
+		enabled, _ := cmd.Flags().GetBool("images")
+		if enabled {
+			enabledTypes = append(enabledTypes, types.MediaTypeImage)
+		}
+	}
+
+	if cmd.Flags().Changed("documents") {
+		enabled, _ := cmd.Flags().GetBool("documents")
+		if enabled {
+			enabledTypes = append(enabledTypes, types.MediaTypeDocument)
+		}
+	}
+
+	if cmd.Flags().Changed("videos") {
+		enabled, _ := cmd.Flags().GetBool("videos")
+		if enabled {
+			enabledTypes = append(enabledTypes, types.MediaTypeVideo)
+		}
+	}
+
+	if cmd.Flags().Changed("audio") {
+		enabled, _ := cmd.Flags().GetBool("audio")
+		if enabled {
+			enabledTypes = append(enabledTypes, types.MediaTypeAudio)
+		}
+	}
+
+	// If individual flags were used, override the media types configuration
+	if len(enabledTypes) > 0 {
+		cfg.EnabledMediaTypes = enabledTypes
+		cfg.EnabledMediaTypesStr = make([]string, len(enabledTypes))
+		for i, mt := range enabledTypes {
+			cfg.EnabledMediaTypesStr[i] = mt.String()
+		}
+	}
+
+	// Handle include-extensions flag
+	if cmd.Flags().Changed("include-extensions") {
+		includeExts, _ := cmd.Flags().GetStringSlice("include-extensions")
+		// Add these extensions to the configuration for the "other" media type
+		if len(includeExts) > 0 {
+			if cfg.MediaTypes[types.MediaTypeOther] == nil {
+				cfg.MediaTypes[types.MediaTypeOther] = &types.MediaConfig{
+					Enabled:    true,
+					Extensions: includeExts,
+					S3Bucket:   cfg.S3Bucket,
+					S3Prefix:   "other/",
+				}
+			} else {
+				cfg.MediaTypes[types.MediaTypeOther].Extensions = append(
+					cfg.MediaTypes[types.MediaTypeOther].Extensions,
+					includeExts...,
+				)
+			}
+
+			// Add "other" to enabled types if not already present
+			found := false
+			for _, mt := range cfg.EnabledMediaTypes {
+				if mt == types.MediaTypeOther {
+					found = true
+					break
+				}
+			}
+			if !found {
+				cfg.EnabledMediaTypes = append(cfg.EnabledMediaTypes, types.MediaTypeOther)
+				cfg.EnabledMediaTypesStr = append(cfg.EnabledMediaTypesStr, "other")
+			}
+		}
+	}
+
+	return nil
 }
 
 // migrateCmd represents the migrate command
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
-	Short: "Migrate images from local storage to S3",
-	Long:  `Migrate images from local storage to S3 and update source code references.`,
+	Short: "Migrate media files from local storage to S3",
+	Long: `Migrate media files (images, documents, videos, audio) from local storage to S3 and update source code references.
+
+Supports multiple media types:
+- Images: jpg, png, gif, svg, webp, ico, bmp, tiff (enabled by default)
+- Documents: pdf, doc, docx, ppt, pptx, xls, xlsx, txt, rtf, odt, ods, odp
+- Videos: mp4, avi, mov, wmv, flv, webm, mkv, m4v, 3gp, ogv  
+- Audio: mp3, wav, ogg, flac, aac, m4a, wma, opus
+
+Use --media-types to specify which types to migrate, or use individual flags like --documents --videos.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load configuration merged with command flags
 		cfg, err := mergeConfigWithFlags(cmd)
@@ -448,13 +571,26 @@ var migrateCmd = &cobra.Command{
 // scanCmd represents the scan command
 var scanCmd = &cobra.Command{
 	Use:   "scan",
-	Short: "Scan source files for image references",
-	Long:  `Scan source files for image references without making changes (dry run).`,
+	Short: "Scan source files for media references",
+	Long: `Scan source files for media references without making changes (dry run).
+
+Supports scanning for multiple media types:
+- Images: jpg, png, gif, svg, webp, ico, bmp, tiff (enabled by default)
+- Documents: pdf, doc, docx, ppt, pptx, xls, xlsx, txt, rtf, odt, ods, odp
+- Videos: mp4, avi, mov, wmv, flv, webm, mkv, m4v, 3gp, ogv
+- Audio: mp3, wav, ogg, flac, aac, m4a, wma, opus
+
+Use --media-types to specify which types to scan, or use individual flags like --documents --videos.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load configuration merged with command flags
 		cfg, err := mergeConfigWithFlags(cmd)
 		if err != nil {
 			return err
+		}
+
+		// Override source directory if provided as positional argument
+		if len(args) > 0 {
+			cfg.SourceDir = args[0]
 		}
 
 		// Get scan-specific flags
@@ -464,15 +600,12 @@ var scanCmd = &cobra.Command{
 		fmt.Printf("Scanning directory: %s\n", cfg.SourceDir)
 		fmt.Printf("File extensions: %v\n", cfg.FileExtensions)
 
-		// Create configuration for scanning
-		config := &types.MigrationConfig{
-			SourceDir:      cfg.SourceDir,
-			FileExtensions: cfg.FileExtensions,
-			Verbose:        cfg.Verbose,
+		if cfg.Verbose {
+			fmt.Printf("Enabled media types: %v\n", cfg.EnabledMediaTypesStr)
 		}
 
 		// Create file scanner and scan for files
-		fileScanner := scanner.NewFileScanner(config)
+		fileScanner := scanner.NewFileScanner(cfg)
 		files, err := fileScanner.ScanDirectory()
 		if err != nil {
 			return fmt.Errorf("error scanning directory: %w", err)
@@ -480,46 +613,166 @@ var scanCmd = &cobra.Command{
 
 		fmt.Printf("\nFound %d files to scan:\n", len(files))
 
-		// Create link parser and process files
+		// Create link parser and process files using media-aware parsing
 		linkParser := scanner.NewLinkParser()
-		totalImages := 0
-		var allReferences []types.ImageReference
+		totalMedia := 0
+		totalImages := 0 // For backward compatibility
+		var allMediaReferences []types.MediaReference
+		var allReferences []types.ImageReference // For backward compatibility
 
 		for _, file := range files {
-			references, err := linkParser.ParseFile(file)
+			// Use media-aware parsing
+			mediaReferences, err := linkParser.ParseFileMedia(file, cfg)
 			if err != nil {
 				fmt.Printf("✗ %s (error: %v)\n", file, err)
 				continue
 			}
 
-			if len(references) > 0 {
-				fmt.Printf("✓ %s (%d images)\n", file, len(references))
-				if verbose {
-					for _, ref := range references {
-						fmt.Printf("  - Line %d: %s\n", ref.LineNumber, ref.OriginalURL)
+			// Count by media type for better reporting
+			imageCount := 0
+			documentCount := 0
+			videoCount := 0
+			audioCount := 0
+			for _, ref := range mediaReferences {
+				switch ref.MediaType {
+				case types.MediaTypeImage:
+					imageCount++
+				case types.MediaTypeDocument:
+					documentCount++
+				case types.MediaTypeVideo:
+					videoCount++
+				case types.MediaTypeAudio:
+					audioCount++
+				}
+			}
+
+			if len(mediaReferences) > 0 {
+				// Determine what to display based on enabled media types
+				if len(cfg.EnabledMediaTypes) == 1 {
+					// Single media type mode - show specific type
+					mediaType := cfg.EnabledMediaTypes[0]
+					var count int
+					var typeName string
+					switch mediaType {
+					case types.MediaTypeImage:
+						count = imageCount
+						typeName = "images"
+					case types.MediaTypeDocument:
+						count = documentCount
+						typeName = "documents"
+					case types.MediaTypeVideo:
+						count = videoCount
+						typeName = "videos"
+					case types.MediaTypeAudio:
+						count = audioCount
+						typeName = "audio files"
+					}
+					fmt.Printf("✓ %s (%d %s)\n", file, count, typeName)
+				} else {
+					// Multiple media types - show total
+					fmt.Printf("✓ %s (%d media files)\n", file, len(mediaReferences))
+				}
+
+				if cfg.Verbose {
+					for _, ref := range mediaReferences {
+						fmt.Printf("  - Line %d: %s (%s)\n", ref.LineNumber, ref.OriginalURL, ref.MediaType.String())
 					}
 				}
 			} else {
-				fmt.Printf("✓ %s (0 images)\n", file)
+				// No media found
+				if len(cfg.EnabledMediaTypes) == 1 {
+					mediaType := cfg.EnabledMediaTypes[0]
+					var typeName string
+					switch mediaType {
+					case types.MediaTypeImage:
+						typeName = "images"
+					case types.MediaTypeDocument:
+						typeName = "documents"
+					case types.MediaTypeVideo:
+						typeName = "videos"
+					case types.MediaTypeAudio:
+						typeName = "audio files"
+					}
+					fmt.Printf("✓ %s (0 %s)\n", file, typeName)
+				} else {
+					fmt.Printf("✓ %s (0 media files)\n", file)
+				}
 			}
 
-			allReferences = append(allReferences, references...)
-			totalImages += len(references)
+			allMediaReferences = append(allMediaReferences, mediaReferences...)
+			totalMedia += len(mediaReferences)
+			totalImages += imageCount
 		}
 
 		fmt.Printf("\nSummary:\n")
 		fmt.Printf("- Files scanned: %d\n", len(files))
-		fmt.Printf("- Images found: %d\n", totalImages)
+
+		// Calculate stats by media type
+		mediaStats := make(map[types.MediaType]int)
+		for _, ref := range allMediaReferences {
+			mediaStats[ref.MediaType]++
+		}
+
+		if len(cfg.EnabledMediaTypes) == 1 {
+			// Single media type mode - show specific type total
+			mediaType := cfg.EnabledMediaTypes[0]
+			count := mediaStats[mediaType]
+			var typeName string
+			switch mediaType {
+			case types.MediaTypeImage:
+				typeName = "Images"
+			case types.MediaTypeDocument:
+				typeName = "Documents"
+			case types.MediaTypeVideo:
+				typeName = "Videos"
+			case types.MediaTypeAudio:
+				typeName = "Audio files"
+			}
+			fmt.Printf("- %s found: %d\n", typeName, count)
+		} else {
+			// Multiple media types - show total and breakdown
+			fmt.Printf("- Media files found: %d\n", totalMedia)
+			for mediaType, count := range mediaStats {
+				if count > 0 {
+					fmt.Printf("  - %s: %d\n", mediaType.String(), count)
+				}
+			}
+		}
 
 		// Save results to file if requested
 		if outputFile != "" {
+			// Convert MediaReference to ImageReference for backward compatibility in save format
+			for _, mediaRef := range allMediaReferences {
+				if mediaRef.MediaType == types.MediaTypeImage {
+					imageRef := types.ImageReference{
+						SourceFile:   mediaRef.SourceFile,
+						LocalPath:    mediaRef.LocalPath,
+						LineNumber:   mediaRef.LineNumber,
+						OriginalURL:  mediaRef.OriginalURL,
+						NewURL:       mediaRef.NewURL,
+						FileSize:     mediaRef.FileSize,
+						ContentType:  mediaRef.ContentType,
+						LastModified: mediaRef.LastModified,
+					}
+					allReferences = append(allReferences, imageRef)
+				}
+			}
+
 			results := &ScanResults{
-				Timestamp:   time.Now(),
-				SourceDir:   cfg.SourceDir,
-				Extensions:  cfg.FileExtensions,
-				TotalFiles:  len(files),
-				TotalImages: totalImages,
-				References:  allReferences,
+				Timestamp:       time.Now(),
+				SourceDir:       cfg.SourceDir,
+				Extensions:      cfg.FileExtensions,
+				TotalFiles:      len(files),
+				TotalMedia:      totalMedia,
+				TotalImages:     totalImages,
+				MediaReferences: allMediaReferences,
+				References:      allReferences, // Backward compatibility
+				MediaStats:      make(map[string]int),
+			}
+
+			// Populate media stats
+			for _, ref := range allMediaReferences {
+				results.MediaStats[ref.MediaType.String()]++
 			}
 
 			if err := saveScanResults(results, outputFile, format); err != nil {
@@ -1059,6 +1312,72 @@ var configSetCmd = &cobra.Command{
 	},
 }
 
+// configMigrateCmd represents the config migrate command
+var configMigrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Migrate v0.1.x configuration to v0.2.0 format",
+	Long: `Migrate an existing v0.1.x configuration file to the new v0.2.0 format with media type support.
+
+This command:
+- Detects v0.1.x configuration files
+- Converts them to v0.2.0 format with media type configuration
+- Preserves all existing settings
+- Enables backward compatibility
+- Creates a backup of the original configuration`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Get the config file path
+		configPath := cfgFile
+		if configPath == "" {
+			if len(args) > 0 {
+				configPath = args[0]
+			} else {
+				configPath = ".mv2s3.yaml"
+			}
+		}
+
+		// Check if config file exists
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			return fmt.Errorf("configuration file not found: %s", configPath)
+		}
+
+		// Load the existing configuration
+		cfg, _, err := config.LoadConfig(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load configuration: %w", err)
+		}
+
+		// Check if already v0.2.0 format
+		if len(cfg.MediaTypes) > 0 {
+			fmt.Printf("✓ Configuration is already in v0.2.0 format: %s\n", configPath)
+			return nil
+		}
+
+		// Create backup
+		backupPath := configPath + ".v1.backup"
+		if err := copyFile(configPath, backupPath); err != nil {
+			return fmt.Errorf("failed to create backup: %w", err)
+		}
+		fmt.Printf("✓ Created backup: %s\n", backupPath)
+
+		// The configuration has already been migrated by the LoadConfig function
+		// We just need to save it in the new format
+		if err := saveConfigFile(cfg, configPath); err != nil {
+			return fmt.Errorf("failed to save migrated configuration: %w", err)
+		}
+
+		fmt.Printf("✓ Configuration migrated to v0.2.0 format: %s\n", configPath)
+		fmt.Printf("\nMigration summary:\n")
+		fmt.Printf("- Enabled media types: %v\n", cfg.EnabledMediaTypesStr)
+		fmt.Printf("- Backward compatibility: Preserved all v0.1.x settings\n")
+		fmt.Printf("- Images are enabled by default (matches v0.1.x behavior)\n")
+		fmt.Printf("- Other media types are disabled by default\n")
+		fmt.Printf("\nTo enable additional media types, edit the configuration file or use:\n")
+		fmt.Printf("  mv2s3 config set enabled_media_types 'images,documents,videos'\n")
+
+		return nil
+	},
+}
+
 // getDefaultConfig returns a configuration with default values
 func getDefaultConfig() *types.MigrationConfig {
 	return &types.MigrationConfig{
@@ -1522,11 +1841,26 @@ func init() {
 	migrateCmd.Flags().StringSlice("extensions", []string{"html", "css", "js", "md"}, "File extensions to scan")
 	migrateCmd.Flags().String("scan-file", "", "Use pre-generated scan file instead of scanning (optional)")
 
+	// Media type filtering flags (v0.2.0+)
+	migrateCmd.Flags().Bool("images", true, "Migrate image files (jpg, png, gif, svg, etc.)")
+	migrateCmd.Flags().Bool("documents", false, "Migrate document files (pdf, doc, docx, etc.)")
+	migrateCmd.Flags().Bool("videos", false, "Migrate video files (mp4, avi, mov, etc.)")
+	migrateCmd.Flags().Bool("audio", false, "Migrate audio files (mp3, wav, ogg, etc.)")
+	migrateCmd.Flags().StringSlice("media-types", []string{"images"}, "Media types to migrate: images, documents, videos, audio")
+	migrateCmd.Flags().StringSlice("include-extensions", []string{}, "Additional file extensions to include for migration")
+
 	// Add flags to scan command
 	scanCmd.Flags().StringP("source", "s", ".", "Source directory to scan")
 	scanCmd.Flags().StringSlice("extensions", []string{"md", "markdown", "html", "css"}, "File extensions to scan (prioritized for Hugo sites)")
 	scanCmd.Flags().StringP("output", "o", "", "Save scan results to file (optional)")
 	scanCmd.Flags().String("format", "text", "Output format: text, json, csv")
+
+	// Media type filtering flags for scan command (v0.2.0+)
+	scanCmd.Flags().Bool("images", true, "Scan for image references (jpg, png, gif, svg, etc.)")
+	scanCmd.Flags().Bool("documents", false, "Scan for document references (pdf, doc, docx, etc.)")
+	scanCmd.Flags().Bool("videos", false, "Scan for video references (mp4, avi, mov, etc.)")
+	scanCmd.Flags().Bool("audio", false, "Scan for audio references (mp3, wav, ogg, etc.)")
+	scanCmd.Flags().StringSlice("media-types", []string{"images"}, "Media types to scan: images, documents, videos, audio")
 
 	// Add flags to verify command
 	verifyCmd.Flags().StringP("bucket", "b", "", "S3 bucket name (required)")
@@ -1549,6 +1883,7 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configSetCmd)
+	configCmd.AddCommand(configMigrateCmd)
 
 	// Add flags to config init command
 	configInitCmd.Flags().Bool("interactive", false, "Run interactive setup")

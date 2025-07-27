@@ -52,6 +52,9 @@ func LoadConfig(cfgFile string) (*types.MigrationConfig, string, error) {
 		return nil, "", fmt.Errorf("failed to parse enabled media types: %w", err)
 	}
 
+	// Handle configuration migration from v0.1.x to v0.2.0
+	migrateV1ConfigToV2(&config)
+
 	// Initialize media types with defaults and backward compatibility
 	config.InitializeMediaTypes()
 
@@ -125,4 +128,54 @@ func ValidateConfig(config *types.MigrationConfig) error {
 	}
 
 	return nil
+}
+
+// migrateV1ConfigToV2 handles automatic migration from v0.1.x configuration format to v0.2.0
+func migrateV1ConfigToV2(config *types.MigrationConfig) {
+	// Check if this is a v0.1.x config by looking for legacy fields and absence of media config
+	hasMediaConfig := len(config.MediaTypes) > 0
+	hasEnabledMediaTypes := len(config.EnabledMediaTypes) > 0 || len(config.EnabledMediaTypesStr) > 0
+
+	// If already has v0.2.0 media configuration, no migration needed
+	if hasMediaConfig || hasEnabledMediaTypes {
+		return
+	}
+
+	// This appears to be a v0.1.x config - migrate to v0.2.0 format
+	// v0.1.x only supported images, so default to images-only mode
+	config.EnabledMediaTypesStr = []string{"images"}
+	config.EnabledMediaTypes = []types.MediaType{types.MediaTypeImage}
+
+	// Initialize default media configuration with images enabled
+	if config.MediaTypes == nil {
+		config.MediaTypes = make(map[types.MediaType]*types.MediaConfig)
+	}
+
+	// Set up image configuration with default extensions and legacy S3 settings
+	config.MediaTypes[types.MediaTypeImage] = &types.MediaConfig{
+		Enabled:    true,
+		Extensions: []string{"jpg", "jpeg", "png", "gif", "svg", "webp", "ico", "bmp", "tiff", "tif"},
+		S3Bucket:   config.S3Bucket, // Inherit from legacy config
+		S3Prefix:   config.S3Prefix, // Inherit from legacy config
+	}
+
+	// Set other media types as disabled by default
+	config.MediaTypes[types.MediaTypeDocument] = &types.MediaConfig{
+		Enabled:    false,
+		Extensions: []string{"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "rtf", "odt", "ods", "odp"},
+		S3Bucket:   config.S3Bucket, // Inherit from legacy config
+		S3Prefix:   "documents/",    // Default prefix for documents
+	}
+	config.MediaTypes[types.MediaTypeVideo] = &types.MediaConfig{
+		Enabled:    false,
+		Extensions: []string{"mp4", "avi", "mov", "wmv", "flv", "webm", "mkv", "m4v", "3gp", "ogv"},
+		S3Bucket:   config.S3Bucket, // Inherit from legacy config
+		S3Prefix:   "videos/",       // Default prefix for videos
+	}
+	config.MediaTypes[types.MediaTypeAudio] = &types.MediaConfig{
+		Enabled:    false,
+		Extensions: []string{"mp3", "wav", "ogg", "flac", "aac", "m4a", "wma", "opus"},
+		S3Bucket:   config.S3Bucket, // Inherit from legacy config
+		S3Prefix:   "audio/",        // Default prefix for audio
+	}
 }
