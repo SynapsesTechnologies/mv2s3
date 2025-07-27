@@ -94,6 +94,20 @@ func getUniqueFiles(refs []types.ImageReference) []string {
 	return files
 }
 
+// getUniqueMediaFiles returns unique source file paths from media references
+func getUniqueMediaFiles(refs []types.MediaReference) []string {
+	fileSet := make(map[string]bool)
+	for _, ref := range refs {
+		fileSet[ref.SourceFile] = true
+	}
+
+	files := make([]string, 0, len(fileSet))
+	for file := range fileSet {
+		files = append(files, file)
+	}
+	return files
+}
+
 // cleanS3Key cleans up the S3 key by removing relative path prefixes and normalizing slashes
 func cleanS3Key(originalURL, prefix string) string {
 	// Start with original URL
@@ -328,6 +342,7 @@ Use --media-types to specify which types to migrate, or use individual flags lik
 		}
 
 		var allReferences []types.ImageReference
+		var allMediaReferences []types.MediaReference
 		var totalFiles int
 
 		if scanFile != "" {
@@ -338,59 +353,112 @@ Use --media-types to specify which types to migrate, or use individual flags lik
 				return fmt.Errorf("error loading scan file: %w", err)
 			}
 
-			allReferences = results.References
-			totalFiles = results.TotalFiles
-			fmt.Printf("Loaded %d image references from %d files\n", len(allReferences), totalFiles)
+			// Use new MediaReferences if available, fallback to old References for compatibility
+			if len(results.MediaReferences) > 0 {
+				allMediaReferences = results.MediaReferences
+				totalFiles = results.TotalFiles
+				fmt.Printf("Loaded %d media references from %d files\n", len(allMediaReferences), totalFiles)
+
+				// Print media type breakdown
+				if len(results.MediaStats) > 0 {
+					fmt.Printf("Media types breakdown:\n")
+					for mediaType, count := range results.MediaStats {
+						fmt.Printf("  - %s: %d\n", mediaType, count)
+					}
+				}
+			} else {
+				// Fallback to legacy format
+				allReferences = results.References
+				totalFiles = results.TotalFiles
+				fmt.Printf("Loaded %d image references from %d files (legacy format)\n", len(allReferences), totalFiles)
+			}
 		} else {
 			// Perform live scan
 			fmt.Printf("Scanning directory: %s\n", cfg.SourceDir)
 			fmt.Printf("File extensions: %v\n", cfg.FileExtensions)
 
-			config := &types.MigrationConfig{
-				SourceDir:      cfg.SourceDir,
-				FileExtensions: cfg.FileExtensions,
-				Verbose:        cfg.Verbose,
-			}
-
-			// Reuse scan logic
-			fileScanner := scanner.NewFileScanner(config)
+			// Create scanner with media type configuration
+			fileScanner := scanner.NewFileScanner(cfg)
 			files, err := fileScanner.ScanDirectory()
 			if err != nil {
 				return fmt.Errorf("error scanning directory: %w", err)
 			}
 
 			linkParser := scanner.NewLinkParser()
+			var mediaStats = make(map[string]int)
+
 			for _, file := range files {
-				references, err := linkParser.ParseFile(file)
+				mediaReferences, err := linkParser.ParseFileMedia(file, cfg)
 				if err != nil {
 					fmt.Printf("✗ %s (error: %v)\n", file, err)
 					continue
 				}
-				allReferences = append(allReferences, references...)
+
+				allMediaReferences = append(allMediaReferences, mediaReferences...)
+
+				// Update media statistics
+				for _, ref := range mediaReferences {
+					mediaStats[ref.MediaType.String()]++
+				}
+
+				if cfg.Verbose {
+					fmt.Printf("✓ %s (%d media files)\n", file, len(mediaReferences))
+				}
 			}
 
 			totalFiles = len(files)
-			fmt.Printf("Found %d image references in %d files\n", len(allReferences), totalFiles)
+			fmt.Printf("Found %d media references in %d files\n", len(allMediaReferences), totalFiles)
+
+			// Print media type breakdown
+			if len(mediaStats) > 0 {
+				fmt.Printf("Media types breakdown:\n")
+				for mediaType, count := range mediaStats {
+					fmt.Printf("  - %s: %d\n", mediaType, count)
+				}
+			}
 		}
 
-		if len(allReferences) == 0 {
-			fmt.Println("No images found to migrate.")
+		// Check if we have references to migrate
+		hasReferences := len(allReferences) > 0 || len(allMediaReferences) > 0
+
+		if !hasReferences {
+			fmt.Println("No media files found to migrate.")
 			return nil
 		}
 
 		fmt.Printf("\nMigration Plan:\n")
-		for i, ref := range allReferences {
-			s3Key := cleanS3Key(ref.OriginalURL, cfg.S3Prefix)
-			s3URL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.S3Bucket, cfg.S3Region, s3Key)
 
-			fmt.Printf("%d. %s:%d\n", i+1, ref.SourceFile, ref.LineNumber)
-			fmt.Printf("   %s -> %s\n", ref.OriginalURL, s3URL)
+		// Show migration plan for new format (media references)
+		if len(allMediaReferences) > 0 {
+			for i, ref := range allMediaReferences {
+				// Get media-specific configuration
+				mediaConfig := cfg.GetMediaConfig(ref.MediaType)
+				s3Key := cleanS3Key(ref.OriginalURL, mediaConfig.S3Prefix)
+				s3URL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.S3Bucket, cfg.S3Region, s3Key)
+
+				fmt.Printf("%d. %s:%d [%s]\n", i+1, ref.SourceFile, ref.LineNumber, ref.MediaType.String())
+				fmt.Printf("   %s -> %s\n", ref.OriginalURL, s3URL)
+			}
+
+			fmt.Printf("\nSummary:\n")
+			fmt.Printf("- Files to process: %d\n", totalFiles)
+			fmt.Printf("- Media files to migrate: %d\n", len(allMediaReferences))
+			fmt.Printf("- S3 Bucket: %s\n", cfg.S3Bucket)
+		} else {
+			// Show migration plan for legacy format (image references)
+			for i, ref := range allReferences {
+				s3Key := cleanS3Key(ref.OriginalURL, cfg.S3Prefix)
+				s3URL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.S3Bucket, cfg.S3Region, s3Key)
+
+				fmt.Printf("%d. %s:%d\n", i+1, ref.SourceFile, ref.LineNumber)
+				fmt.Printf("   %s -> %s\n", ref.OriginalURL, s3URL)
+			}
+
+			fmt.Printf("\nSummary:\n")
+			fmt.Printf("- Files to process: %d\n", totalFiles)
+			fmt.Printf("- Images to migrate: %d\n", len(allReferences))
+			fmt.Printf("- S3 Bucket: %s\n", cfg.S3Bucket)
 		}
-
-		fmt.Printf("\nSummary:\n")
-		fmt.Printf("- Files to process: %d\n", totalFiles)
-		fmt.Printf("- Images to migrate: %d\n", len(allReferences))
-		fmt.Printf("- S3 Bucket: %s\n", cfg.S3Bucket)
 
 		if cfg.DryRun {
 			fmt.Println("\n✓ Dry run completed - no changes made")
@@ -422,32 +490,58 @@ Use --media-types to specify which types to migrate, or use individual flags lik
 			return fmt.Errorf("bucket '%s' does not exist", cfg.S3Bucket)
 		}
 
-		// 3. Upload images and build URL mapping
-		fmt.Println("3. Uploading images to S3...")
+		// 3. Upload media files and build URL mapping
+		fmt.Println("3. Uploading media files to S3...")
 		urlMapping := make(map[string]string)
 		uploadedCount := 0
 		skippedCount := 0
 		failedCount := 0
 
-		for i, ref := range allReferences {
-			// Construct S3 key using the same logic as preview
-			s3Key := cleanS3Key(ref.OriginalURL, cfg.S3Prefix)
+		// Use MediaReferences if available, fallback to legacy ImageReferences
+		var referencesToProcess []interface{}
+		if len(allMediaReferences) > 0 {
+			for _, ref := range allMediaReferences {
+				referencesToProcess = append(referencesToProcess, ref)
+			}
+		} else {
+			for _, ref := range allReferences {
+				referencesToProcess = append(referencesToProcess, ref)
+			}
+		}
 
-			// Construct full path to source image
-			var imagePath string
-			if filepath.IsAbs(ref.OriginalURL) {
-				imagePath = ref.OriginalURL
-			} else {
-				// Resolve relative to source file's directory
-				sourceDir := filepath.Dir(ref.SourceFile)
-				imagePath = filepath.Join(sourceDir, ref.OriginalURL)
+		for i, refInterface := range referencesToProcess {
+			var originalURL, sourceFile string
+			var s3Key string
+
+			switch ref := refInterface.(type) {
+			case types.MediaReference:
+				originalURL = ref.OriginalURL
+				sourceFile = ref.SourceFile
+				// Get media-specific configuration for S3 prefix
+				mediaConfig := cfg.GetMediaConfig(ref.MediaType)
+				s3Key = cleanS3Key(ref.OriginalURL, mediaConfig.S3Prefix)
+			case types.ImageReference:
+				originalURL = ref.OriginalURL
+				sourceFile = ref.SourceFile
+				// Use global prefix for legacy references
+				s3Key = cleanS3Key(ref.OriginalURL, cfg.S3Prefix)
 			}
 
-			fmt.Printf("   [%d/%d] Processing %s -> s3://%s/%s\n", i+1, len(allReferences), ref.OriginalURL, cfg.S3Bucket, s3Key)
+			// Construct full path to source file
+			var filePath string
+			if filepath.IsAbs(originalURL) {
+				filePath = originalURL
+			} else {
+				// Resolve relative to source file's directory
+				sourceDir := filepath.Dir(sourceFile)
+				filePath = filepath.Join(sourceDir, originalURL)
+			}
 
-			// Check if image file exists
-			if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-				fmt.Printf("   ✗ Image file not found: %s\n", imagePath)
+			fmt.Printf("   [%d/%d] Processing %s -> s3://%s/%s\n", i+1, len(referencesToProcess), originalURL, cfg.S3Bucket, s3Key)
+
+			// Check if file exists
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				fmt.Printf("   ✗ Media file not found: %s\n", filePath)
 				failedCount++
 				continue
 			}
@@ -463,21 +557,21 @@ Use --media-types to specify which types to migrate, or use individual flags lik
 			if exists {
 				// Object already exists, skip upload but add to URL mapping
 				s3URL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.S3Bucket, cfg.S3Region, s3Key)
-				urlMapping[ref.OriginalURL] = s3URL
+				urlMapping[originalURL] = s3URL
 				skippedCount++
 				fmt.Printf("   ↺ Already exists in S3, skipping upload\n")
 				continue
 			}
 
 			// Upload to S3
-			s3URL, err := s3Client.UploadFile(imagePath, cfg.S3Bucket, s3Key)
+			s3URL, err := s3Client.UploadFile(filePath, cfg.S3Bucket, s3Key)
 			if err != nil {
 				fmt.Printf("   ✗ Upload failed: %v\n", err)
 				failedCount++
 				continue
 			}
 
-			urlMapping[ref.OriginalURL] = s3URL
+			urlMapping[originalURL] = s3URL
 			uploadedCount++
 			if cfg.Verbose {
 				fmt.Printf("   ✓ Uploaded: %s\n", s3URL)
@@ -490,29 +584,48 @@ Use --media-types to specify which types to migrate, or use individual flags lik
 		fmt.Printf("- Failed uploads: %d\n", failedCount)
 
 		if uploadedCount == 0 && skippedCount == 0 {
-			return fmt.Errorf("no images were successfully processed")
+			return fmt.Errorf("no media files were successfully processed")
 		}
 
 		// 4. Update source files with new URLs
 		fmt.Println("\n4. Updating source files with S3 URLs...")
 		urlReplacer := processor.NewURLReplacer(cfg.Verbose, false, cfg.BackupOriginals) // Use config for backups
 
-		// Validate file access first
-		if err := urlReplacer.ValidateFileAccess(allReferences); err != nil {
-			return fmt.Errorf("file access validation failed: %w", err)
-		}
+		// Validate file access and update files based on reference type
+		if len(allMediaReferences) > 0 {
+			// Use new MediaReference methods
+			if err := urlReplacer.ValidateMediaFileAccess(allMediaReferences); err != nil {
+				return fmt.Errorf("file access validation failed: %w", err)
+			}
 
-		// Update files
-		if err := urlReplacer.UpdateImageReferences(allReferences, urlMapping); err != nil {
-			return fmt.Errorf("error updating source files: %w", err)
+			if err := urlReplacer.UpdateMediaReferences(allMediaReferences, urlMapping); err != nil {
+				return fmt.Errorf("error updating source files: %w", err)
+			}
+		} else {
+			// Use legacy ImageReference methods for backward compatibility
+			if err := urlReplacer.ValidateFileAccess(allReferences); err != nil {
+				return fmt.Errorf("file access validation failed: %w", err)
+			}
+
+			if err := urlReplacer.UpdateImageReferences(allReferences, urlMapping); err != nil {
+				return fmt.Errorf("error updating source files: %w", err)
+			}
 		}
 
 		// 5. Success summary
 		fmt.Printf("\n✓ Migration completed successfully!\n")
 		fmt.Printf("Summary:\n")
-		fmt.Printf("- Images uploaded to S3: %d\n", uploadedCount)
-		fmt.Printf("- Images already in S3: %d\n", skippedCount)
-		fmt.Printf("- Source files updated: %d\n", len(getUniqueFiles(allReferences)))
+		fmt.Printf("- Media files uploaded to S3: %d\n", uploadedCount)
+		fmt.Printf("- Media files already in S3: %d\n", skippedCount)
+
+		// Calculate unique files updated
+		var uniqueFiles int
+		if len(allMediaReferences) > 0 {
+			uniqueFiles = len(getUniqueMediaFiles(allMediaReferences))
+		} else {
+			uniqueFiles = len(getUniqueFiles(allReferences))
+		}
+		fmt.Printf("- Source files updated: %d\n", uniqueFiles)
 		fmt.Printf("- S3 bucket: %s\n", cfg.S3Bucket)
 		if cfg.S3Prefix != "" {
 			fmt.Printf("- S3 prefix: %s\n", cfg.S3Prefix)
@@ -523,39 +636,67 @@ Use --media-types to specify which types to migrate, or use individual flags lik
 
 		// 6. Optional cleanup of local files
 		if cfg.CleanupLocal {
-			fmt.Printf("\n6. Cleaning up local image files...\n")
-
-			// Only clean up files that were successfully uploaded
-			var successfulRefs []types.ImageReference
-			for _, ref := range allReferences {
-				if _, exists := urlMapping[ref.OriginalURL]; exists {
-					successfulRefs = append(successfulRefs, ref)
-				}
-			}
+			fmt.Printf("\n6. Cleaning up local media files...\n")
 
 			deletedCount := 0
 			failedCount := 0
 
-			for i, ref := range successfulRefs {
-				// Construct full path to source image
-				var imagePath string
-				if filepath.IsAbs(ref.OriginalURL) {
-					imagePath = ref.OriginalURL
-				} else {
-					// Resolve relative to source file's directory
-					sourceDir := filepath.Dir(ref.SourceFile)
-					imagePath = filepath.Join(sourceDir, ref.OriginalURL)
+			// Build list of files to clean up based on reference type
+			if len(allMediaReferences) > 0 {
+				// Use MediaReferences
+				for i, ref := range allMediaReferences {
+					if _, exists := urlMapping[ref.OriginalURL]; !exists {
+						continue // Only clean up successfully uploaded files
+					}
+
+					// Construct full path to source file
+					var filePath string
+					if filepath.IsAbs(ref.OriginalURL) {
+						filePath = ref.OriginalURL
+					} else {
+						// Resolve relative to source file's directory
+						sourceDir := filepath.Dir(ref.SourceFile)
+						filePath = filepath.Join(sourceDir, ref.OriginalURL)
+					}
+
+					fmt.Printf("   [%d/%d] Deleting %s", i+1, len(allMediaReferences), filePath)
+
+					// Delete file
+					if err := os.Remove(filePath); err != nil {
+						fmt.Printf(" ✗ (failed: %v)\n", err)
+						failedCount++
+					} else {
+						fmt.Printf(" ✓\n")
+						deletedCount++
+					}
 				}
+			} else {
+				// Use legacy ImageReferences
+				for i, ref := range allReferences {
+					if _, exists := urlMapping[ref.OriginalURL]; !exists {
+						continue // Only clean up successfully uploaded files
+					}
 
-				fmt.Printf("   [%d/%d] Deleting %s", i+1, len(successfulRefs), imagePath)
+					// Construct full path to source image
+					var imagePath string
+					if filepath.IsAbs(ref.OriginalURL) {
+						imagePath = ref.OriginalURL
+					} else {
+						// Resolve relative to source file's directory
+						sourceDir := filepath.Dir(ref.SourceFile)
+						imagePath = filepath.Join(sourceDir, ref.OriginalURL)
+					}
 
-				// Delete file
-				if err := os.Remove(imagePath); err != nil {
-					fmt.Printf(" ✗ (failed: %v)\n", err)
-					failedCount++
-				} else {
-					fmt.Printf(" ✓\n")
-					deletedCount++
+					fmt.Printf("   [%d/%d] Deleting %s", i+1, len(allReferences), imagePath)
+
+					// Delete file
+					if err := os.Remove(imagePath); err != nil {
+						fmt.Printf(" ✗ (failed: %v)\n", err)
+						failedCount++
+					} else {
+						fmt.Printf(" ✓\n")
+						deletedCount++
+					}
 				}
 			}
 
@@ -808,9 +949,12 @@ var verifyCmd = &cobra.Command{
 
 		// Create S3 configuration
 		config := &types.MigrationConfig{
-			S3Bucket: cfg.S3Bucket,
-			S3Region: cfg.S3Region,
-			Verbose:  cfg.Verbose,
+			S3Bucket:          cfg.S3Bucket,
+			S3Region:          cfg.S3Region,
+			S3Prefix:          cfg.S3Prefix,
+			MediaTypes:        cfg.MediaTypes,
+			EnabledMediaTypes: cfg.EnabledMediaTypes,
+			Verbose:           cfg.Verbose,
 		}
 
 		// Create S3 client
@@ -918,8 +1062,10 @@ var verifyCmd = &cobra.Command{
 // cleanupCmd represents the cleanup command
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup",
-	Short: "Clean up local image files",
-	Long:  `Clean up local image files after successful migration to S3.`,
+	Short: "Clean up local media files",
+	Long: `Clean up local media files after successful migration to S3.
+
+Supports all media types: images, documents, videos, audio, and other files.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load configuration merged with command flags
 		cfg, err := mergeConfigWithFlags(cmd)
@@ -949,10 +1095,29 @@ var cleanupCmd = &cobra.Command{
 			return fmt.Errorf("error loading scan file: %w", err)
 		}
 
-		fmt.Printf("Loaded %d image references from scan file\n", len(results.References))
+		var mediaReferences []types.MediaReference
+		var legacyReferences []types.ImageReference
 
-		if len(results.References) == 0 {
-			fmt.Println("No image references found in scan file.")
+		// Use new MediaReferences if available, fallback to old References for compatibility
+		if len(results.MediaReferences) > 0 {
+			mediaReferences = results.MediaReferences
+			fmt.Printf("Loaded %d media references from scan file\n", len(mediaReferences))
+
+			// Print media type breakdown
+			if len(results.MediaStats) > 0 {
+				fmt.Printf("Media types breakdown:\n")
+				for mediaType, count := range results.MediaStats {
+					fmt.Printf("  - %s: %d\n", mediaType, count)
+				}
+			}
+		} else {
+			// Fallback to legacy format
+			legacyReferences = results.References
+			fmt.Printf("Loaded %d image references from scan file (legacy format)\n", len(legacyReferences))
+		}
+
+		if len(mediaReferences) == 0 && len(legacyReferences) == 0 {
+			fmt.Println("No media references found in scan file.")
 			return nil
 		}
 
@@ -965,9 +1130,11 @@ var cleanupCmd = &cobra.Command{
 
 			fmt.Printf("Initializing S3 client for verification...\n")
 			migrationConfig := &types.MigrationConfig{
-				S3Bucket: cfg.S3Bucket,
-				S3Region: cfg.S3Region,
-				S3Prefix: cfg.S3Prefix,
+				S3Bucket:          cfg.S3Bucket,
+				S3Region:          cfg.S3Region,
+				S3Prefix:          cfg.S3Prefix,
+				MediaTypes:        cfg.MediaTypes,
+				EnabledMediaTypes: cfg.EnabledMediaTypes,
 			}
 			s3Client, err = storage.NewS3Client(migrationConfig)
 			if err != nil {
@@ -975,14 +1142,71 @@ var cleanupCmd = &cobra.Command{
 			}
 		}
 
-		// Process each image reference
-		fmt.Printf("\nAnalyzing images for cleanup...\n")
+		// Process media references
+		fmt.Printf("\nAnalyzing media files for cleanup...\n")
 
 		var toDelete []string
 		var notFound []string
 		var s3Missing []string
+		var totalReferences int
 
-		for _, ref := range results.References {
+		// Process new format (MediaReferences)
+		for _, ref := range mediaReferences {
+			totalReferences++
+
+			// Construct full path to local media file
+			var mediaPath string
+			if filepath.IsAbs(ref.OriginalURL) {
+				mediaPath = ref.OriginalURL
+			} else {
+				// Resolve relative to source file's directory
+				sourceDir := filepath.Dir(ref.SourceFile)
+				mediaPath = filepath.Join(sourceDir, ref.OriginalURL)
+			}
+
+			// Check if local file exists
+			if _, err := os.Stat(mediaPath); os.IsNotExist(err) {
+				notFound = append(notFound, mediaPath)
+				if cfg.Verbose {
+					fmt.Printf("  ⚠ Local file not found: %s\n", mediaPath)
+				}
+				continue
+			}
+
+			// Verify S3 existence if requested
+			if verifyS3 {
+				// Get media-type-specific configuration
+				mediaConfig := cfg.GetMediaConfig(ref.MediaType)
+				s3Bucket := mediaConfig.S3Bucket
+				if s3Bucket == "" {
+					s3Bucket = cfg.S3Bucket // Fallback to global bucket
+				}
+
+				s3Key := cleanS3Key(ref.OriginalURL, mediaConfig.S3Prefix)
+				exists, err := s3Client.ObjectExists(s3Bucket, s3Key)
+				if err != nil {
+					fmt.Printf("  ✗ Error checking S3 object %s: %v\n", s3Key, err)
+					continue
+				}
+				if !exists {
+					s3Missing = append(s3Missing, mediaPath)
+					if cfg.Verbose {
+						fmt.Printf("  ⚠ S3 object not found: s3://%s/%s (local: %s)\n", s3Bucket, s3Key, mediaPath)
+					}
+					continue
+				}
+			}
+
+			toDelete = append(toDelete, mediaPath)
+			if cfg.Verbose {
+				fmt.Printf("  ✓ Marked for deletion: %s [%s]\n", mediaPath, ref.MediaType.String())
+			}
+		}
+
+		// Process legacy format (ImageReferences) for backward compatibility
+		for _, ref := range legacyReferences {
+			totalReferences++
+
 			// Construct full path to local image
 			var imagePath string
 			if filepath.IsAbs(ref.OriginalURL) {
@@ -996,13 +1220,13 @@ var cleanupCmd = &cobra.Command{
 			// Check if local file exists
 			if _, err := os.Stat(imagePath); os.IsNotExist(err) {
 				notFound = append(notFound, imagePath)
-				if verbose {
+				if cfg.Verbose {
 					fmt.Printf("  ⚠ Local file not found: %s\n", imagePath)
 				}
 				continue
 			}
 
-			// Verify S3 existence if requested
+			// Verify S3 existence if requested (legacy uses global prefix)
 			if verifyS3 {
 				s3Key := cleanS3Key(ref.OriginalURL, cfg.S3Prefix)
 				exists, err := s3Client.ObjectExists(cfg.S3Bucket, s3Key)
@@ -1021,14 +1245,14 @@ var cleanupCmd = &cobra.Command{
 
 			toDelete = append(toDelete, imagePath)
 			if cfg.Verbose {
-				fmt.Printf("  ✓ Marked for deletion: %s\n", imagePath)
+				fmt.Printf("  ✓ Marked for deletion: %s [legacy]\n", imagePath)
 			}
 		}
 
 		// Summary
 		fmt.Printf("\nCleanup Analysis:\n")
-		fmt.Printf("- Total images in scan: %d\n", len(results.References))
-		fmt.Printf("- Local files found: %d\n", len(results.References)-len(notFound))
+		fmt.Printf("- Total media files in scan: %d\n", totalReferences)
+		fmt.Printf("- Local files found: %d\n", totalReferences-len(notFound))
 		fmt.Printf("- Local files not found: %d\n", len(notFound))
 		if verifyS3 {
 			fmt.Printf("- S3 verification enabled: ✓\n")
@@ -1070,7 +1294,7 @@ var cleanupCmd = &cobra.Command{
 
 		// Confirm deletion unless force is used
 		if !force {
-			fmt.Printf("\n⚠ This will permanently delete %d local image files.\n", len(toDelete))
+			fmt.Printf("\n⚠ This will permanently delete %d local media files.\n", len(toDelete))
 			fmt.Printf("Continue? (y/N): ")
 
 			var response string
@@ -1263,8 +1487,20 @@ var configGetCmd = &cobra.Command{
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a configuration value",
-	Long:  `Set a configuration value by key name. The configuration file will be updated.`,
-	Args:  cobra.ExactArgs(2),
+	Long: `Set a configuration value by key name. The configuration file will be updated.
+
+Examples:
+  # Set global settings
+  mv2s3 config set s3_prefix "media/"
+  mv2s3 config set s3_bucket "my-bucket"
+  mv2s3 config set enabled_media_types "images,documents"
+  
+  # Set media type specific settings
+  mv2s3 config set media_types.images.s3_prefix "img/"
+  mv2s3 config set media_types.documents.s3_prefix "docs/"
+  mv2s3 config set media_types.documents.enabled true
+  mv2s3 config set media_types.videos.extensions "mp4,avi,mov"`,
+	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
 		value := args[1]
@@ -1804,9 +2040,142 @@ func setConfigValue(cfg *types.MigrationConfig, key, value string) error {
 		}
 		cfg.Verbose = val
 	default:
+		// Check for nested media type configuration (e.g., media_types.images.s3_prefix)
+		if strings.HasPrefix(strings.ToLower(key), "media_types.") {
+			return setMediaTypeConfigValue(cfg, key, value)
+		}
 		return fmt.Errorf("unknown configuration key: %s", key)
 	}
 	return nil
+}
+
+// setMediaTypeConfigValue sets a media type specific configuration value
+// Handles keys like: media_types.images.s3_prefix, media_types.documents.enabled, etc.
+func setMediaTypeConfigValue(cfg *types.MigrationConfig, key, value string) error {
+	// Parse the key: media_types.{mediaType}.{field}
+	parts := strings.Split(key, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid media type configuration key format: %s (expected: media_types.{type}.{field})", key)
+	}
+
+	mediaTypeStr := strings.ToLower(parts[1])
+	field := strings.ToLower(parts[2])
+
+	// Parse media type
+	mediaType, err := types.ParseMediaType(mediaTypeStr)
+	if err != nil {
+		return fmt.Errorf("invalid media type: %s (valid: images, documents, videos, audio, other)", mediaTypeStr)
+	}
+
+	// Initialize media types map if needed
+	if cfg.MediaTypes == nil {
+		cfg.MediaTypes = make(map[types.MediaType]*types.MediaConfig)
+	}
+
+	// Get existing config or create default
+	mediaConfig, exists := cfg.MediaTypes[mediaType]
+	if !exists {
+		mediaConfig = getDefaultMediaTypeConfig(mediaType)
+	}
+
+	// Set the field value
+	switch field {
+	case "enabled":
+		val, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("invalid boolean value for %s: %s", key, value)
+		}
+		mediaConfig.Enabled = val
+	case "s3_prefix", "s3prefix":
+		mediaConfig.S3Prefix = value
+	case "s3_bucket", "s3bucket":
+		mediaConfig.S3Bucket = value
+	case "extensions":
+		mediaConfig.Extensions = strings.Split(value, ",")
+		// Trim spaces
+		for i, ext := range mediaConfig.Extensions {
+			mediaConfig.Extensions[i] = strings.TrimSpace(ext)
+		}
+	default:
+		return fmt.Errorf("unknown media type configuration field: %s (valid: enabled, s3_prefix, s3_bucket, extensions)", field)
+	}
+
+	// Update the configuration
+	cfg.MediaTypes[mediaType] = mediaConfig
+
+	// Update enabled media types list if enabling/disabling
+	if field == "enabled" {
+		if mediaConfig.Enabled {
+			// Add to enabled list if not already present
+			found := false
+			for _, mt := range cfg.EnabledMediaTypes {
+				if mt == mediaType {
+					found = true
+					break
+				}
+			}
+			if !found {
+				cfg.EnabledMediaTypes = append(cfg.EnabledMediaTypes, mediaType)
+				cfg.EnabledMediaTypesStr = append(cfg.EnabledMediaTypesStr, mediaType.String())
+			}
+		} else {
+			// Remove from enabled list
+			newEnabled := []types.MediaType{}
+			newEnabledStr := []string{}
+			for _, mt := range cfg.EnabledMediaTypes {
+				if mt != mediaType {
+					newEnabled = append(newEnabled, mt)
+					newEnabledStr = append(newEnabledStr, mt.String())
+				}
+			}
+			cfg.EnabledMediaTypes = newEnabled
+			cfg.EnabledMediaTypesStr = newEnabledStr
+		}
+	}
+
+	return nil
+}
+
+// getDefaultMediaTypeConfig returns default configuration for a media type
+func getDefaultMediaTypeConfig(mediaType types.MediaType) *types.MediaConfig {
+	switch mediaType {
+	case types.MediaTypeImage:
+		return &types.MediaConfig{
+			Enabled:    false,
+			Extensions: []string{"jpg", "jpeg", "png", "gif", "svg", "webp", "ico", "bmp"},
+			S3Prefix:   "images/",
+		}
+	case types.MediaTypeDocument:
+		return &types.MediaConfig{
+			Enabled:    false,
+			Extensions: []string{"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "rtf"},
+			S3Prefix:   "documents/",
+		}
+	case types.MediaTypeVideo:
+		return &types.MediaConfig{
+			Enabled:    false,
+			Extensions: []string{"mp4", "avi", "mov", "wmv", "flv", "webm", "mkv"},
+			S3Prefix:   "videos/",
+		}
+	case types.MediaTypeAudio:
+		return &types.MediaConfig{
+			Enabled:    false,
+			Extensions: []string{"mp3", "wav", "ogg", "flac", "aac", "m4a"},
+			S3Prefix:   "audio/",
+		}
+	case types.MediaTypeOther:
+		return &types.MediaConfig{
+			Enabled:    false,
+			Extensions: []string{},
+			S3Prefix:   "other/",
+		}
+	default:
+		return &types.MediaConfig{
+			Enabled:    false,
+			Extensions: []string{},
+			S3Prefix:   "files/",
+		}
+	}
 }
 
 // parseBool parses a boolean value from string
@@ -1891,7 +2260,7 @@ func init() {
 	verifyCmd.Flags().StringP("region", "r", "us-east-1", "AWS region")
 
 	// Add flags to cleanup command
-	cleanupCmd.Flags().String("scan-file", "", "Scan file containing migrated images (required)")
+	cleanupCmd.Flags().String("scan-file", "", "Scan file containing migrated media files (required)")
 	cleanupCmd.Flags().StringP("bucket", "b", "", "S3 bucket name (required for S3 verification)")
 	cleanupCmd.Flags().StringP("region", "r", "us-east-1", "AWS region")
 	cleanupCmd.Flags().StringP("prefix", "p", "", "S3 key prefix")
@@ -2012,14 +2381,23 @@ func saveScanResultsText(results *ScanResults, outputFile string) error {
 	fmt.Fprintf(file, "# Source Directory: %s\n", results.SourceDir)
 	fmt.Fprintf(file, "# File Extensions: %s\n", strings.Join(results.Extensions, ", "))
 	fmt.Fprintf(file, "# Total Files: %d\n", results.TotalFiles)
-	fmt.Fprintf(file, "# Total Images: %d\n", results.TotalImages)
+	fmt.Fprintf(file, "# Total Media: %d\n", results.TotalMedia)
+
+	// Write media type statistics
+	if len(results.MediaStats) > 0 {
+		fmt.Fprintf(file, "# Media Types:\n")
+		for mediaType, count := range results.MediaStats {
+			fmt.Fprintf(file, "#   %s: %d\n", mediaType, count)
+		}
+	}
+
 	fmt.Fprintf(file, "#\n")
-	fmt.Fprintf(file, "# Format: source_file:line_number:original_url\n")
+	fmt.Fprintf(file, "# Format: source_file:line_number:media_type:original_url\n")
 	fmt.Fprintf(file, "#\n")
 
-	// Write image references
-	for _, ref := range results.References {
-		fmt.Fprintf(file, "%s:%d:%s\n", ref.SourceFile, ref.LineNumber, ref.OriginalURL)
+	// Write media references (v0.2.0+ format)
+	for _, ref := range results.MediaReferences {
+		fmt.Fprintf(file, "%s:%d:%s:%s\n", ref.SourceFile, ref.LineNumber, ref.MediaType.String(), ref.OriginalURL)
 	}
 
 	return nil
@@ -2067,7 +2445,9 @@ func loadScanResultsText(scanFile string) (*ScanResults, error) {
 	}
 
 	results := &ScanResults{
-		References: []types.ImageReference{},
+		References:      []types.ImageReference{},
+		MediaReferences: []types.MediaReference{},
+		MediaStats:      make(map[string]int),
 	}
 
 	lines := strings.Split(string(content), "\n")
@@ -2077,27 +2457,66 @@ func loadScanResultsText(scanFile string) (*ScanResults, error) {
 			continue
 		}
 
-		// Parse format: source_file:line_number:original_url
-		parts := strings.SplitN(line, ":", 3)
-		if len(parts) != 3 {
+		// Parse format: source_file:line_number:media_type:original_url (v0.2.0+)
+		// or: source_file:line_number:original_url (v0.1.x compatibility)
+		parts := strings.SplitN(line, ":", 4)
+
+		if len(parts) == 4 {
+			// New format with media type
+			var lineNumber int
+			if _, err := fmt.Sscanf(parts[1], "%d", &lineNumber); err != nil {
+				return nil, fmt.Errorf("invalid line number at line %d: %s", lineNum+1, parts[1])
+			}
+
+			mediaType, err := types.ParseMediaType(parts[2])
+			if err != nil {
+				return nil, fmt.Errorf("invalid media type at line %d: %s", lineNum+1, parts[2])
+			}
+
+			ref := types.MediaReference{
+				SourceFile:  parts[0],
+				LineNumber:  lineNumber,
+				MediaType:   mediaType,
+				OriginalURL: parts[3],
+				LocalPath:   parts[3], // Will be resolved later
+			}
+			results.MediaReferences = append(results.MediaReferences, ref)
+			results.MediaStats[mediaType.String()]++
+
+		} else if len(parts) == 3 {
+			// Legacy format (backward compatibility)
+			var lineNumber int
+			if _, err := fmt.Sscanf(parts[1], "%d", &lineNumber); err != nil {
+				return nil, fmt.Errorf("invalid line number at line %d: %s", lineNum+1, parts[1])
+			}
+
+			// Legacy format assumes images
+			ref := types.ImageReference{
+				SourceFile:  parts[0],
+				LineNumber:  lineNumber,
+				OriginalURL: parts[2],
+				LocalPath:   parts[2], // Will be resolved later
+			}
+			results.References = append(results.References, ref)
+
+			// Also add to new format for consistency
+			mediaRef := types.MediaReference{
+				SourceFile:  parts[0],
+				LineNumber:  lineNumber,
+				MediaType:   types.MediaTypeImage,
+				OriginalURL: parts[2],
+				LocalPath:   parts[2],
+			}
+			results.MediaReferences = append(results.MediaReferences, mediaRef)
+			results.MediaStats["images"]++
+
+		} else {
 			return nil, fmt.Errorf("invalid format at line %d: %s", lineNum+1, line)
 		}
-
-		var lineNumber int
-		if _, err := fmt.Sscanf(parts[1], "%d", &lineNumber); err != nil {
-			return nil, fmt.Errorf("invalid line number at line %d: %s", lineNum+1, parts[1])
-		}
-
-		ref := types.ImageReference{
-			SourceFile:  parts[0],
-			LineNumber:  lineNumber,
-			OriginalURL: parts[2],
-			LocalPath:   parts[2], // Will be resolved later
-		}
-		results.References = append(results.References, ref)
 	}
 
 	results.TotalImages = len(results.References)
+	results.TotalMedia = len(results.MediaReferences)
 	return results, nil
 }
 
