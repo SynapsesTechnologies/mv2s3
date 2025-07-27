@@ -52,6 +52,11 @@ func LoadConfig(cfgFile string) (*types.MigrationConfig, string, error) {
 		return nil, "", fmt.Errorf("failed to parse enabled media types: %w", err)
 	}
 
+	// Convert string-based media types map to enum-based map
+	if err := config.ConvertMediaTypesFromString(); err != nil {
+		return nil, "", fmt.Errorf("failed to convert media types: %w", err)
+	}
+
 	// Handle configuration migration from v0.1.x to v0.2.0
 	migrateV1ConfigToV2(&config)
 

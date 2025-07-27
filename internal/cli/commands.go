@@ -1609,6 +1609,30 @@ func showAllConfig(cfg *types.MigrationConfig, format string, showSources bool, 
 			fmt.Printf("  include_patterns: %v\n", cfg.IncludePatterns)
 		}
 
+		// Media Types Configuration (v0.2.0+)
+		if len(cfg.MediaTypes) > 0 {
+			fmt.Println("\nMedia Types Configuration:")
+			if len(cfg.EnabledMediaTypes) > 0 {
+				enabledNames := make([]string, len(cfg.EnabledMediaTypes))
+				for i, mt := range cfg.EnabledMediaTypes {
+					enabledNames[i] = mt.String()
+				}
+				fmt.Printf("  enabled_media_types: %v\n", enabledNames)
+			}
+
+			for mediaType, config := range cfg.MediaTypes {
+				fmt.Printf("  %s:\n", mediaType.String())
+				fmt.Printf("    enabled: %t\n", config.Enabled)
+				fmt.Printf("    extensions: %v\n", config.Extensions)
+				if config.S3Bucket != "" {
+					fmt.Printf("    s3_bucket: %s\n", config.S3Bucket)
+				}
+				if config.S3Prefix != "" {
+					fmt.Printf("    s3_prefix: %s\n", config.S3Prefix)
+				}
+			}
+		}
+
 		fmt.Println("\nAWS S3 Configuration:")
 		if cfg.S3Bucket != "" {
 			fmt.Printf("  s3_bucket: %s\n", cfg.S3Bucket)

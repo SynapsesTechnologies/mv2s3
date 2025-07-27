@@ -160,7 +160,8 @@ type MigrationConfig struct {
 	// Media type configuration (v0.2.0+)
 	EnabledMediaTypes    []MediaType                `yaml:"enabled_media_types,omitempty"` // Handled specially
 	EnabledMediaTypesStr []string                   `mapstructure:"enabled_media_types"`   // For viper unmarshaling
-	MediaTypes           map[MediaType]*MediaConfig `mapstructure:"media_types" yaml:"media_types"`
+	MediaTypes           map[MediaType]*MediaConfig `yaml:"media_types,omitempty"`         // For YAML output
+	MediaTypesStr        map[string]*MediaConfig    `mapstructure:"media_types"`           // For viper unmarshaling
 
 	// AWS S3 configuration (legacy, still supported for backward compatibility)
 	S3Bucket    string `mapstructure:"s3_bucket" yaml:"s3_bucket"`
@@ -197,6 +198,27 @@ func (mc *MigrationConfig) ParseEnabledMediaTypes() error {
 			return fmt.Errorf("invalid media type '%s': %w", typeStr, err)
 		}
 		mc.EnabledMediaTypes = append(mc.EnabledMediaTypes, mediaType)
+	}
+
+	return nil
+}
+
+// ConvertMediaTypesFromString converts the string-based MediaTypesStr map to enum-based MediaTypes map
+func (mc *MigrationConfig) ConvertMediaTypesFromString() error {
+	if len(mc.MediaTypesStr) == 0 {
+		return nil
+	}
+
+	if mc.MediaTypes == nil {
+		mc.MediaTypes = make(map[MediaType]*MediaConfig)
+	}
+
+	for typeStr, config := range mc.MediaTypesStr {
+		mediaType, err := ParseMediaType(typeStr)
+		if err != nil {
+			return fmt.Errorf("invalid media type '%s': %w", typeStr, err)
+		}
+		mc.MediaTypes[mediaType] = config
 	}
 
 	return nil
